@@ -36,6 +36,7 @@ class BunkerMessenger {
   void SetOdometryFrame(std::string frame) { odom_frame_ = frame; }
   void SetBaseFrame(std::string frame) { base_frame_ = frame; }
   void SetOdometryTopicName(std::string name) { odom_topic_name_ = name; }
+  void SetAngularErrorScalar(double val) {angular_error_scalar_ = val;}
 
   void SetSimulationMode(int loop_rate) {
     simulated_robot_ = true;
@@ -82,6 +83,7 @@ class BunkerMessenger {
     status_msg.header.stamp = current_time_;
 
     status_msg.linear_velocity = state.motion_state.linear_velocity;
+    state.motion_state.angular_velocity /= angular_error_scalar_;
     status_msg.angular_velocity = state.motion_state.angular_velocity;
 
     status_msg.vehicle_state = state.system_state.vehicle_state;
@@ -148,6 +150,8 @@ class BunkerMessenger {
   std::string base_frame_;
   std::string odom_topic_name_;
 
+  double angular_error_scalar_;
+
   bool simulated_robot_ = false;
   int sim_control_rate_ = 50;
 
@@ -183,10 +187,8 @@ class BunkerMessenger {
   }
   void SetBunkerMotionCommand(const geometry_msgs::msg::Twist::SharedPtr msg)
   {
-    bunker_->SetMotionCommand(msg->linear.x, msg->angular.z);
+    bunker_->SetMotionCommand(msg->linear.x, msg->angular.z * angular_error_scalar_);
   }
-
-  
 
   geometry_msgs::msg::Quaternion createQuaternionMsgFromYaw(double yaw) {
     tf2::Quaternion q;

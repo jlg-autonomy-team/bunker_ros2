@@ -27,6 +27,8 @@ def generate_launch_description():
                                                    description='Whether running with simulator')
     sim_control_rate_arg = DeclareLaunchArgument('control_rate', default_value='50',
                                                  description='Simulation control loop update rate')
+    angular_error_scalar_arg = DeclareLaunchArgument('angular_error_scalar', default_value='1.0',
+                                                 description='Angular velocity scalar to correct wheelbase error on bunker')
     
     bunker_base_node = launch_ros.actions.Node(
         package='bunker_base',
@@ -42,6 +44,7 @@ def generate_launch_description():
                 'is_bunker_mini': launch.substitutions.LaunchConfiguration('is_bunker_mini'),
                 'simulated_robot': launch.substitutions.LaunchConfiguration('simulated_robot'),
                 'control_rate': launch.substitutions.LaunchConfiguration('control_rate'),
+                'angular_error_scalar': launch.substitutions.LaunchConfiguration('angular_error_scalar'),
         }])
 
     return LaunchDescription([
@@ -53,5 +56,6 @@ def generate_launch_description():
         is_bunker_mini_arg,
         simulated_robot_arg,
         sim_control_rate_arg,
+        angular_error_scalar_arg,
         bunker_base_node
     ])
