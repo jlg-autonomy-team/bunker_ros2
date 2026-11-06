@@ -1,0 +1,33 @@
+# Twist covariance of /odometry/wheel (see include/bunker_base/wheel_odom_covariance.hpp for the model).
+#
+# Fitted with tools/odom_covariance/fit_variance_model.py in the integration repo, from bags of the robot driven by RC on
+# the outdoor demo area with the RTK INS as the reference (full_track, full_track_reverse, outdoor_pivot_ccw,
+# outdoor_pivot_cw; 259 windows of 1 s, INS and SLAM fits agree). Residual = wheel twist - reference twist at the centre of
+# rotation, track slip and scale error included. The model was fitted with angular_error_scalar 1.125 on both the command
+# and the feedback, so re-fit it before changing the feedback scalar.
+#
+# Where the INS and SLAM fits differ the larger value is used. Indoor floor values are several times smaller (vx 1.5e-4 +
+# 4.3e-4 v^2, vy 3.6e-5 + 0.0053 (v wz)^2, wz 4e-6 + 0.0017 wz^2 driving / 0.010 wz^2 pivoting).
+#
+# Calibration of the outdoor fit (1/2/3 sigma coverage; Gaussian is 0.68/0.95/0.997): vx 0.70/0.95/0.99,
+# vy 0.69/0.95/0.99, wz 0.78/0.95/0.98. The constant terms are upper bounds (the reference has its own noise), and the vy
+# slip term is the least stable.
+#
+# Not described by a velocity covariance: the yaw push on straights (about 0.3 deg/m forward outdoors), the forward creep
+# of the pivot centre on slopes (1.5 to 2 cm/s) and the 1 to 2.5% short distance. SLAM has to carry those.
+/**:
+  ros__parameters:
+    twist_covariance:
+      vx_base: 9.9e-4              # m2/s2
+      vx_per_v2: 0.0
+      vy_base: 7.7e-4              # m2/s2
+      vy_per_vwz2: 0.0177          # times (v * wz)^2
+      wz_base: 2.9e-4              # rad2/s2
+      wz_per_v2: 0.0
+      wz_drive_per_wz2: 0.045      # times wz^2 while |v| >= pivot_speed_threshold
+      wz_pivot_per_wz2: 0.0079     # times wz^2 while |v| < pivot_speed_threshold
+      pivot_speed_threshold: 0.1   # m/s
+      unused_variance: 1000.0      # vz, roll and pitch rates, and every axis while the state is stale
+    # The pose is dead reckoning and is not meant to be fused; this only marks it as uncertain.
+    pose_covariance_diagonal: [1.0, 1.0, 1000000.0, 1000000.0, 1000000.0, 1.0]
+    stale_state_timeout_s: 0.5

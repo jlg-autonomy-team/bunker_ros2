@@ -5,8 +5,9 @@ import launch_ros
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, ExecuteProcess
-from launch.substitutions import LaunchConfiguration, Command
+from launch.substitutions import LaunchConfiguration, Command, PathJoinSubstitution
 from launch_ros.actions import Node
+from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
@@ -17,8 +18,10 @@ def generate_launch_description():
                                          description='CAN bus name, e.g. can0')
     odom_frame_arg = DeclareLaunchArgument('odom_frame', default_value='odom',
                                            description='Odometry frame id')
-    base_link_frame_arg = DeclareLaunchArgument('base_frame', default_value='base_link',
-                                                description='Base link frame id')
+    # base_footprint sits on the centre of rotation (bunker_pro_description.urdf.xacro), so the twist is published for that
+    # point and vy = 0 holds.
+    base_link_frame_arg = DeclareLaunchArgument('base_frame', default_value='base_footprint',
+                                                description='Frame the odometry twist is expressed in')
     odom_topic_arg = DeclareLaunchArgument('odom_topic_name', default_value='odom',
                                            description='Odometry topic name')
     is_bunker_mini_arg = DeclareLaunchArgument('is_bunker_mini', default_value='false',
@@ -29,13 +32,17 @@ def generate_launch_description():
                                                  description='Simulation control loop update rate')
     angular_error_scalar_arg = DeclareLaunchArgument('angular_error_scalar', default_value='1.0',
                                                  description='Angular velocity scalar to correct wheelbase error on bunker')
+    params_file_arg = DeclareLaunchArgument(
+        'params_file',
+        default_value=PathJoinSubstitution([FindPackageShare('bunker_base'), 'config', 'wheel_odom_covariance.yaml']),
+        description='Parameters file with the wheel odometry covariance model')
     
     bunker_base_node = launch_ros.actions.Node(
         package='bunker_base',
         executable='bunker_base_node',
         output='screen',
         emulate_tty=True,
-        parameters=[{
+        parameters=[LaunchConfiguration('params_file'), {
                 'use_sim_time': launch.substitutions.LaunchConfiguration('use_sim_time'),
                 'port_name': launch.substitutions.LaunchConfiguration('port_name'),                
                 'odom_frame': launch.substitutions.LaunchConfiguration('odom_frame'),
@@ -57,5 +64,6 @@ def generate_launch_description():
         simulated_robot_arg,
         sim_control_rate_arg,
         angular_error_scalar_arg,
+        params_file_arg,
         bunker_base_node
     ])

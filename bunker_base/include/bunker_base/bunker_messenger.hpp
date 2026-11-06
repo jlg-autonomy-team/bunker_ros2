@@ -10,6 +10,9 @@
 #ifndef BUNKER_MESSENGER_HPP
 #define BUNKER_MESSENGER_HPP
 
+#include <algorithm>
+#include <array>
+#include <chrono>
 #include <string>
 #include <mutex>
 #include <memory>
@@ -23,6 +26,7 @@
 #include "bunker_msgs/msg/bunker_status.hpp"
 #include "bunker_msgs/msg/bunker_rc_state.hpp"
 
+#include "bunker_base/wheel_odom_covariance.hpp"
 #include "ugv_sdk/mobile_robot/bunker_robot.hpp"
 #include "ugv_sdk/utilities/protocol_detector.hpp"
 
@@ -36,7 +40,25 @@ class BunkerMessenger {
   void SetOdometryFrame(std::string frame) { odom_frame_ = frame; }
   void SetBaseFrame(std::string frame) { base_frame_ = frame; }
   void SetOdometryTopicName(std::string name) { odom_topic_name_ = name; }
-  void SetAngularErrorScalar(double val) {angular_error_scalar_ = val;}
+  // Sets the command and the feedback scalar together (the original single parameter).
+  void SetAngularErrorScalar(double val) {
+    command_angular_scalar_ = val;
+    feedback_angular_scalar_ = val;
+  }
+  // Multiplies commanded angular velocity before it is sent to the robot.
+  void SetCommandAngularScalar(double val) {command_angular_scalar_ = val;}
+  // Divides the angular velocity the robot reports before it is published (status and odometry).
+  void SetFeedbackAngularScalar(double val) {feedback_angular_scalar_ = val;}
+  void SetTwistCovarianceModel(const WheelTwistCovarianceModel &model) {
+    covariance_model_ = model;
+  }
+  // Nominal diagonal for the odometry pose: dead reckoning has no bound on its drift, so this is only a marker that the
+  // pose is not to be fused as an absolute measurement.
+  void SetPoseCovarianceDiagonal(const std::array<double, 6> &diagonal) {
+    pose_covariance_diagonal_ = diagonal;
+  }
+  // Odometry reports zero velocity with unknown covariance when the SDK has not updated its state for this long.
+  void SetStaleStateTimeout(double seconds) {stale_state_timeout_s_ = seconds;}
 
   void SetSimulationMode(int loop_rate) {
     simulated_robot_ = true;
@@ -83,7 +105,7 @@ class BunkerMessenger {
     status_msg.header.stamp = current_time_;
 
     status_msg.linear_velocity = state.motion_state.linear_velocity;
-    state.motion_state.angular_velocity /= angular_error_scalar_;
+    state.motion_state.angular_velocity /= feedback_angular_scalar_;
     status_msg.angular_velocity = state.motion_state.angular_velocity;
 
     status_msg.vehicle_state = state.system_state.vehicle_state;
@@ -136,7 +158,9 @@ class BunkerMessenger {
     status_pub_->publish(status_msg);
 
     // publish odometry and tf
-    PublishOdometryToROS(state.motion_state, dt);
+    const double state_age_s =
+        std::chrono::duration<double>(SdkClock::now() - state.time_stamp).count();
+    PublishOdometryToROS(state.motion_state, dt, state_age_s);
 
     // record time for next integration
     last_time_ = current_time_;
@@ -150,7 +174,11 @@ class BunkerMessenger {
   std::string base_frame_;
   std::string odom_topic_name_;
 
-  double angular_error_scalar_;
+  double command_angular_scalar_ = 1.0;
+  double feedback_angular_scalar_ = 1.0;
+  WheelTwistCovarianceModel covariance_model_;
+  std::array<double, 6> pose_covariance_diagonal_{{1.0, 1.0, 1e6, 1e6, 1e6, 1.0}};
+  double stale_state_timeout_s_ = 0.5;
 
   bool simulated_robot_ = false;
   int sim_control_rate_ = 50;
@@ -187,7 +215,7 @@ class BunkerMessenger {
   }
   void SetBunkerMotionCommand(const geometry_msgs::msg::Twist::SharedPtr msg)
   {
-    bunker_->SetMotionCommand(msg->linear.x, msg->angular.z * angular_error_scalar_);
+    bunker_->SetMotionCommand(msg->linear.x, msg->angular.z * command_angular_scalar_);
   }
 
   geometry_msgs::msg::Quaternion createQuaternionMsgFromYaw(double yaw) {
@@ -196,10 +224,21 @@ class BunkerMessenger {
     return tf2::toMsg(q);
   }
 
-  void PublishOdometryToROS(const MotionStateMessage &msg, double dt) {
+  void PublishOdometryToROS(const MotionStateMessage &msg, double dt,
+                            double state_age_s) {
+    // The SDK keeps the last motion state forever. If the CAN traffic stops, integrating it would keep the odometry
+    // moving at the last speed, so report standing still with no confidence instead.
+    const bool stale = !(state_age_s <= stale_state_timeout_s_);
+    if (stale) {
+      RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 2000,
+                           "Robot state not updated for %.1f s: wheel odometry reports zero velocity "
+                           "with unknown covariance",
+                           state_age_s);
+    }
+
     // perform numerical integration to get an estimation of pose
-    double linear_speed = msg.linear_velocity;
-    double angular_speed = msg.angular_velocity;
+    double linear_speed = stale ? 0.0 : msg.linear_velocity;
+    double angular_speed = stale ? 0.0 : msg.angular_velocity;
 
     // if (std::is_base_of<BunkerMiniOmniRobot, BunkerType>::value) {
     //   lateral_speed = msg.lateral_velocity;
@@ -246,6 +285,15 @@ class BunkerMessenger {
     odom_msg.twist.twist.linear.x = linear_speed;
     odom_msg.twist.twist.linear.y = 0.0;
     odom_msg.twist.twist.angular.z = angular_speed;
+
+    // The pose is the integral of the twist and is not meant to be fused.
+    for (int i = 0; i < 6; ++i) {
+      odom_msg.pose.covariance[i * 7] = pose_covariance_diagonal_[i];
+    }
+    const auto twist_covariance = stale ? covariance_model_.Unknown()
+                                        : covariance_model_.Twist(linear_speed, angular_speed);
+    std::copy(twist_covariance.begin(), twist_covariance.end(),
+              odom_msg.twist.covariance.begin());
 
     odom_pub_->publish(odom_msg);
   }
